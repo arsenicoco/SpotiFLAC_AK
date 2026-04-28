@@ -25,14 +25,15 @@ const (
 	qobuzCredentialsCacheFile      = "qobuz-api-credentials.json"
 	qobuzCredentialsCacheTTL       = 24 * time.Hour
 	qobuzCredentialsProbeTrackISRC = "USUM71703861"
-	qobuzOpenTrackProbeURL         = "https://open.qobuz.com/track/1"
+	qobuzPlayLoginProbeURL         = "https://play.qobuz.com/login"
+	qobuzPlayHostBaseURL           = "https://play.qobuz.com"
 )
 
 var (
 	qobuzCredentialsMu           sync.Mutex
 	qobuzCachedCredentials       *qobuzAPICredentials
-	qobuzOpenBundleScriptPattern = regexp.MustCompile(`<script[^>]+src="([^"]+/js/main\.js|/resources/[^"]+/js/main\.js)"`)
-	qobuzOpenAPIConfigPattern    = regexp.MustCompile(`app_id:"(?P<app_id>\d{9})",app_secret:"(?P<app_secret>[a-f0-9]{32})"`)
+	qobuzPlayBundleScriptPattern = regexp.MustCompile(`<script[^>]+src="((?:https?://[^"]+)?/resources/[^"]+/bundle\.js)"`)
+	qobuzPlayAPIConfigPattern    = regexp.MustCompile(`(?:production:\{api:\{)?appId:"(?P<app_id>\d{9})",appSecret:"(?P<app_secret>[a-f0-9]{32})"`)
 )
 
 type qobuzAPICredentials struct {
@@ -125,7 +126,7 @@ func qobuzCredentialsCacheIsFresh(creds *qobuzAPICredentials) bool {
 }
 
 func scrapeQobuzOpenCredentials(client *http.Client) (*qobuzAPICredentials, error) {
-	req, err := http.NewRequest(http.MethodGet, qobuzOpenTrackProbeURL, nil)
+	req, err := http.NewRequest(http.MethodGet, qobuzPlayLoginProbeURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -133,31 +134,31 @@ func scrapeQobuzOpenCredentials(client *http.Client) (*qobuzAPICredentials, erro
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch open.qobuz.com shell: %w", err)
+		return nil, fmt.Errorf("failed to fetch play.qobuz.com shell: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("open.qobuz.com returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(preview)))
+		return nil, fmt.Errorf("play.qobuz.com returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(preview)))
 	}
 
 	htmlBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read open.qobuz.com shell: %w", err)
+		return nil, fmt.Errorf("failed to read play.qobuz.com shell: %w", err)
 	}
 
-	scriptMatch := qobuzOpenBundleScriptPattern.FindStringSubmatch(string(htmlBody))
+	scriptMatch := qobuzPlayBundleScriptPattern.FindStringSubmatch(string(htmlBody))
 	if len(scriptMatch) < 2 {
-		return nil, fmt.Errorf("qobuz open bundle URL not found")
+		return nil, fmt.Errorf("qobuz play bundle URL not found")
 	}
 
 	bundleURL := strings.TrimSpace(scriptMatch[1])
 	if strings.HasPrefix(bundleURL, "/") {
-		bundleURL = "https://open.qobuz.com" + bundleURL
+		bundleURL = qobuzPlayHostBaseURL + bundleURL
 	}
 	if bundleURL == "" {
-		return nil, fmt.Errorf("qobuz open bundle URL is empty")
+		return nil, fmt.Errorf("qobuz play bundle URL is empty")
 	}
 
 	bundleReq, err := http.NewRequest(http.MethodGet, bundleURL, nil)
@@ -168,23 +169,23 @@ func scrapeQobuzOpenCredentials(client *http.Client) (*qobuzAPICredentials, erro
 
 	bundleResp, err := client.Do(bundleReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch qobuz open bundle: %w", err)
+		return nil, fmt.Errorf("failed to fetch qobuz play bundle: %w", err)
 	}
 	defer bundleResp.Body.Close()
 
 	if bundleResp.StatusCode != http.StatusOK {
 		preview, _ := io.ReadAll(io.LimitReader(bundleResp.Body, 512))
-		return nil, fmt.Errorf("qobuz open bundle returned status %d: %s", bundleResp.StatusCode, strings.TrimSpace(string(preview)))
+		return nil, fmt.Errorf("qobuz play bundle returned status %d: %s", bundleResp.StatusCode, strings.TrimSpace(string(preview)))
 	}
 
 	bundleBody, err := io.ReadAll(bundleResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read qobuz open bundle: %w", err)
+		return nil, fmt.Errorf("failed to read qobuz play bundle: %w", err)
 	}
 
-	configMatch := qobuzOpenAPIConfigPattern.FindStringSubmatch(string(bundleBody))
+	configMatch := qobuzPlayAPIConfigPattern.FindStringSubmatch(string(bundleBody))
 	if len(configMatch) < 3 {
-		return nil, fmt.Errorf("qobuz api app_id/app_secret pair not found in open bundle")
+		return nil, fmt.Errorf("qobuz api appId/appSecret pair not found in play bundle")
 	}
 
 	return &qobuzAPICredentials{
