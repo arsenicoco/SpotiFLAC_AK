@@ -417,12 +417,14 @@ func (q *QobuzDownloader) GetDownloadURL(trackID int64, quality string, allowFal
 			}
 			orderedProviderIDs = reordered
 		}
-		var lastErr error
+		var providerErrors []string
+		attempted := 0
 		for _, providerID := range orderedProviderIDs {
 			p, ok := providerMap[providerID]
 			if !ok {
 				continue
 			}
+			attempted++
 
 			fmt.Printf("Trying Provider: %s (Quality: %s)...\n", p.Name, qual)
 
@@ -435,9 +437,12 @@ func (q *QobuzDownloader) GetDownloadURL(trackID int64, quality string, allowFal
 
 			fmt.Printf("Provider failed: %v\n", err)
 			recordProviderFailure("qobuz", p.API)
-			lastErr = err
+			providerErrors = append(providerErrors, fmt.Sprintf("%s: %v", p.Name, err))
 		}
-		return "", lastErr
+		if attempted == 0 {
+			return "", fmt.Errorf("no qobuz providers configured")
+		}
+		return "", fmt.Errorf("all providers failed at quality %s: %s", qual, strings.Join(providerErrors, "; "))
 	}
 
 	url, err := downloadFunc(qualityCode)
@@ -449,25 +454,26 @@ func (q *QobuzDownloader) GetDownloadURL(trackID int64, quality string, allowFal
 
 	if currentQuality == "27" && allowFallback {
 		fmt.Printf("⚠ Download with quality 27 failed, trying fallback to 7 (24-bit Standard)...\n")
-		url, err := downloadFunc("7")
-		if err == nil {
+		fallbackURL, fallbackErr := downloadFunc("7")
+		if fallbackErr == nil {
 			fmt.Println("✓ Success with fallback quality 7")
-			return url, nil
+			return fallbackURL, nil
 		}
-
+		err = fallbackErr
 		currentQuality = "7"
 	}
 
 	if currentQuality == "7" && allowFallback {
 		fmt.Printf("⚠ Download with quality 7 failed, trying fallback to 6 (16-bit Lossless)...\n")
-		url, err := downloadFunc("6")
-		if err == nil {
+		fallbackURL, fallbackErr := downloadFunc("6")
+		if fallbackErr == nil {
 			fmt.Println("✓ Success with fallback quality 6")
-			return url, nil
+			return fallbackURL, nil
 		}
+		err = fallbackErr
 	}
 
-	return "", fmt.Errorf("all APIs and fallbacks failed. Last error: %v", err)
+	return "", fmt.Errorf("all APIs and fallbacks failed: %v", err)
 }
 
 func (q *QobuzDownloader) DownloadFile(url, filepath string) error {

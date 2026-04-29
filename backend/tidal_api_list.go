@@ -173,7 +173,10 @@ func PrimeTidalAPIList() error {
 func RefreshTidalAPIList(force bool) ([]string, error) {
 	tidalAPIListMu.Lock()
 	defer tidalAPIListMu.Unlock()
+	return refreshTidalAPIListLocked(force)
+}
 
+func refreshTidalAPIListLocked(force bool) ([]string, error) {
 	state, err := loadTidalAPIListStateLocked()
 	if err != nil {
 		state = &tidalAPIListCache{}
@@ -216,7 +219,16 @@ func GetTidalAPIList() ([]string, error) {
 	}
 
 	if len(state.URLs) == 0 {
-		return nil, fmt.Errorf("no cached tidal api urls")
+		if _, fetchErr := refreshTidalAPIListLocked(true); fetchErr != nil {
+			return nil, fmt.Errorf("no cached tidal api urls: %w", fetchErr)
+		}
+		state, err = loadTidalAPIListStateLocked()
+		if err != nil {
+			return nil, err
+		}
+		if len(state.URLs) == 0 {
+			return nil, fmt.Errorf("no cached tidal api urls")
+		}
 	}
 
 	return append([]string(nil), state.URLs...), nil
@@ -233,7 +245,17 @@ func GetRotatedTidalAPIList() ([]string, error) {
 
 	urls := state.URLs
 	if len(urls) == 0 {
-		return nil, fmt.Errorf("no cached tidal api urls")
+		if _, fetchErr := refreshTidalAPIListLocked(true); fetchErr != nil {
+			return nil, fmt.Errorf("no cached tidal api urls: %w", fetchErr)
+		}
+		state, err = loadTidalAPIListStateLocked()
+		if err != nil {
+			return nil, err
+		}
+		urls = state.URLs
+		if len(urls) == 0 {
+			return nil, fmt.Errorf("no cached tidal api urls")
+		}
 	}
 
 	return rotateTidalAPIURLs(urls, state.LastUsedURL), nil
